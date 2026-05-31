@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?><database>
+    <element db_object_id="a36c36bb0fcdc790d1e3efc530d1b24f" label="Telemetry Vault Logs" max_length="40" name="x_704340_metro_v_0_telemetry_vault_logs" type="collection">
+        <element label="Pump status" max_length="40" name="pump_status" type="string"/>
+        <element label="Water level" max_length="40" name="water_level" type="string"/>
+        <element label="Evaluation" max_length="4000" name="evaluation" type="string"/>
+        <element label="Temperature" max_length="40" name="temperature" type="string"/>
+        <element label="Vault ID" max_length="40" name="vault_id" type="string"/>
+    </element>
+</database>

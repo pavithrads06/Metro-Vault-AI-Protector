@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="ua_table_licensing_config">
+    <ua_table_licensing_config action="INSERT_OR_UPDATE">
+        <is_fulfillment>false</is_fulfillment>
+        <license_condition/>
+        <license_model>none</license_model>
+        <license_roles/>
+        <name>x_704340_metro_v_0_telemetry_vault_logs</name>
+        <op_delete>true</op_delete>
+        <op_insert>true</op_insert>
+        <op_update>true</op_update>
+        <owner_condition/>
+        <sys_class_name>ua_table_licensing_config</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-05-31 11:35:41</sys_created_on>
+        <sys_id>a17c76bb0fcdc790d1e3efc530d1b20d</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>x_704340_metro_v_0_telemetry_vault_logs</sys_name>
+        <sys_package display_value="Metro Vault AI Protector" source="x_704340_metro_v_0">dc5b78f30f41c790d1e3efc530d1b292</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Metro Vault AI Protector">dc5b78f30f41c790d1e3efc530d1b292</sys_scope>
+        <sys_update_name>ua_table_licensing_config_a17c76bb0fcdc790d1e3efc530d1b20d</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-05-31 11:35:41</sys_updated_on>
+    </ua_table_licensing_config>
+</record_update>

@@ -10,13 +10,19 @@
         <operation_script><![CDATA[(function process(request, response) {
     var requestBody = request.body.nextEntry();
     
-    // 1. Generate an MD5 hash of the payload to enforce data idempotency
+    // 1. Extract and parse incoming sensor values safely
+    var vaultId = requestBody.vault_id;
+    var waterLevel = parseFloat(requestBody.water_level_inches) || 0.0;
+    var tempC = parseInt(requestBody.vault_temp_c, 10) || 0;
+    var pumpStatus = requestBody.pump_status ? requestBody.pump_status.toUpperCase() : "UNKNOWN";
+
+    // 2. Enforce Data Idempotency (MD5 Hash Check to prevent duplicate processing)
     var stringPayload = JSON.stringify(requestBody);
     var crypt = typeof GlideDigest == 'undefined' ? new CertificateEncryption() : new GlideDigest();
     var payloadHash = crypt.getMD5Hex(stringPayload);
     
-    // Check for duplicate sensor hits to prevent redundant processing costs
-    var checkDup = new GlideRecord('x_704340_metro_v_0_vault_safety_incident'); // *** REPLACE with your actual scoped table name ***
+    // Check against your Incident table to prevent double-firing
+    var checkDup = new GlideRecord('x_704340_metro_v_0_vault_safety_incident'); // *** Replace with your actual Extended Incident Table Name ***
     checkDup.addQuery('u_payload_hash', payloadHash);
     checkDup.query();
     if(checkDup.next()) {
@@ -24,25 +30,52 @@
         response.setBody({ "status": "Ignored", "message": "Duplicate telemetry payload detected." });
         return;
     }
-// 2. Initialize a live record on your custom Vault Incident table
-    var gr = new GlideRecord('x_704340_metro_v_0_vault_safety_incident'); // *** REPLACE with your actual scoped table name ***
+
+    // 3. Evaluate Conditions: Should we skip incident creation?
+    // Ideal/Normal Scenario: Low water AND safe temp AND non-failing pump status
+    if (waterLevel <= 6.0 && tempC <= 50 && (pumpStatus === "IDLE" || pumpStatus === "RUNNING")) {
+        
+        // OPTIONAL: Log the clean tracking data to a background telemetry table
+        var telemetryLog = new GlideRecord('x_704340_metro_v_0_telemetry_vault_logs'); // *** Replace with your Log Table if created, or comment out ***
+        if (telemetryLog.isValid()) {
+            telemetryLog.initialize();
+            telemetryLog.vault_id = vaultId;
+            telemetryLog.water_level = waterLevel.toString();
+            telemetryLog.temperature = tempC.toString();
+            telemetryLog.pump_status = pumpStatus;
+            telemetryLog.evaluation = "AI Evaluated Result: NORMAL - No Incident Required.";
+            telemetryLog.insert();
+        }
+
+        // Return a clean tracking response back to Postman/Sensor without an Incident ID
+        response.setStatus(200);
+        response.setBody({
+            "status": "Success",
+            "evaluation": "AI Evaluated Result: Normal operating environment tracked.",
+            "vault_incident_created": "NONE"
+        });
+        return;
+    }
+
+    // 4. Anomaly Detected Workflow: Create Vault Safety Incident for OpenAI to process
+    var gr = new GlideRecord('x_704340_metro_v_0_vault_safety_incident'); // *** Replace with your actual Extended Incident Table Name ***
     gr.initialize();
-    gr.short_description = "Telemetry Alert: " + requestBody.vault_id;
-    
-    // Standardize input properties for the AI processor
-    gr.description = "VAULT_ID: " + requestBody.vault_id + " // WATER_LEVEL: " + requestBody.water_level_inches + " INCHES // TEMP: " + requestBody.vault_temp_c + "C // PUMP_STATE: " + requestBody.pump_status;
-    gr.u_payload_hash = payloadHash;
+    gr.short_description = "Telemetry Alert: Anomaly detected at " + vaultId;
+    gr.description = "VAULT_ID: " + vaultId + " // WATER_LEVEL: " + waterLevel + " INCHES // TEMP: " + tempC + "C // PUMP_STATE: " + pumpStatus;
+    gr.payload_hash = payloadHash;
     
     var createdSysId = gr.insert();
-    
-    // 3. Respond back to the sensor device
-    var res = {};
-    res.status = "Success";
-    res.vault_incident_created = createdSysId;
+
+    // Respond back indicating an active emergency ticket was opened
+    var res = {
+        "status": "Anomaly Detected",
+        "evaluation": "Metrics exceeded safety thresholds. Operational record dispatched to AI Diagnostic Engine.",
+        "vault_incident_created": createdSysId
+    };
     response.setBody(res);
     response.setStatus(201);
-})(request, response);
-]]></operation_script>
+
+})(request, response);]]></operation_script>
         <operation_uri>/api/x_704340_metro_v_0/vault_telemetry_endpoint/ingest</operation_uri>
         <produces>application/json,application/xml,text/xml</produces>
         <produces_customized>false</produces_customized>
@@ -56,14 +89,14 @@
         <sys_created_by>admin</sys_created_by>
         <sys_created_on>2026-05-31 02:48:01</sys_created_on>
         <sys_id>e88209730f81c790d1e3efc530d1b2d1</sys_id>
-        <sys_mod_count>1</sys_mod_count>
+        <sys_mod_count>2</sys_mod_count>
         <sys_name>Ingest Sensor data</sys_name>
         <sys_package display_value="Metro Vault AI Protector" source="x_704340_metro_v_0">dc5b78f30f41c790d1e3efc530d1b292</sys_package>
         <sys_policy/>
         <sys_scope display_value="Metro Vault AI Protector">dc5b78f30f41c790d1e3efc530d1b292</sys_scope>
         <sys_update_name>sys_ws_operation_e88209730f81c790d1e3efc530d1b2d1</sys_update_name>
         <sys_updated_by>admin</sys_updated_by>
-        <sys_updated_on>2026-05-31 02:49:16</sys_updated_on>
+        <sys_updated_on>2026-05-31 11:43:16</sys_updated_on>
         <web_service_definition display_value="Vault Telemetry Endpoint">a14141ff0f41c790d1e3efc530d1b2bc</web_service_definition>
         <web_service_version/>
     </sys_ws_operation>
