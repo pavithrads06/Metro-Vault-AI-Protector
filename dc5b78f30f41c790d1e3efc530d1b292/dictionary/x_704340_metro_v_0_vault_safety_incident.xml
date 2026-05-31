@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?><database>
+    <element db_object_id="558cbc770f41c790d1e3efc530d1b28b" extends="task" label="Vault Safety Incident" max_length="40" name="x_704340_metro_v_0_vault_safety_incident" type="collection">
+        <element label="Execution latency" max_length="255" name="execution_latency" type="integer"/>
+        <element label="Payload hash" max_length="4000" name="payload_hash" type="string"/>
+        <element label="AI JSON Output" max_length="4000" name="ai_json_output" type="string"/>
+        <element label="Analysis" max_length="4000" name="analysis" type="string"/>
+    </element>
+</database>
