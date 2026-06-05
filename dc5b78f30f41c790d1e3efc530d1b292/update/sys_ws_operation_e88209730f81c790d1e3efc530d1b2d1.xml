@@ -9,69 +9,89 @@
         <name>Ingest Sensor data</name>
         <operation_script><![CDATA[(function process(request, response) {
     var requestBody = request.body.nextEntry();
-    
+
     // 1. Extract and parse incoming sensor values safely
-    var vaultId = requestBody.vault_id;
-    var waterLevel = parseFloat(requestBody.water_level_inches) || 0.0;
-    var tempC = parseInt(requestBody.vault_temp_c, 10) || 0;
-    var pumpStatus = requestBody.pump_status ? requestBody.pump_status.toUpperCase() : "UNKNOWN";
+    var vaultId = requestBody.sensor_id || requestBody.vault_id || "UNKNOWN_VAULT";
+    
+    // Support both formatting types (inches from your script vs cm from standard IoT data)
+    var waterLevel = parseFloat(requestBody.water_level_inches) || parseFloat(requestBody.telemetry ? requestBody.telemetry.water_level_cm : 0.0) || 0.0;
+    var tempC = parseInt(requestBody.vault_temp_c, 10) || parseInt(requestBody.telemetry ? requestBody.telemetry.transformer_temp_c : 0, 10) || 0;
+    
+    var pumpStatus = requestBody.pump_status || (requestBody.telemetry ? requestBody.telemetry.pump_status : "UNKNOWN");
+    pumpStatus = pumpStatus ? pumpStatus.toUpperCase() : "UNKNOWN";
 
     // 2. Enforce Data Idempotency (MD5 Hash Check to prevent duplicate processing)
     var stringPayload = JSON.stringify(requestBody);
     var crypt = typeof GlideDigest == 'undefined' ? new CertificateEncryption() : new GlideDigest();
     var payloadHash = crypt.getMD5Hex(stringPayload);
-    
-    // Check against your Incident table to prevent double-firing
-    var checkDup = new GlideRecord('x_704340_metro_v_0_vault_safety_incident'); // *** Replace with your actual Extended Incident Table Name ***
+
+    // Check against your Incident table to prevent double-firing active emergencies
+    var checkDup = new GlideRecord('x_704340_metro_v_0_vault_safety_incident'); 
     checkDup.addQuery('u_payload_hash', payloadHash);
+    checkDup.addQuery('active', true); 
     checkDup.query();
-    if(checkDup.next()) {
+
+    if (checkDup.next()) {
         response.setStatus(200);
-        response.setBody({ "status": "Ignored", "message": "Duplicate telemetry payload detected." });
+        response.setBody({
+            "status": "Ignored",
+            "message": "Duplicate active telemetry payload detected. Suppressing duplicate execution to protect system resources."
+        });
         return;
     }
 
-    // 3. Evaluate Conditions: Should we skip incident creation?
-    // Ideal/Normal Scenario: Low water AND safe temp AND non-failing pump status
-    if (waterLevel <= 6.0 && tempC <= 50 && (pumpStatus === "IDLE" || pumpStatus === "RUNNING")) {
-        
-        // OPTIONAL: Log the clean tracking data to a background telemetry table
-        var telemetryLog = new GlideRecord('x_704340_metro_v_0_telemetry_vault_logs'); // *** Replace with your Log Table if created, or comment out ***
+    // 3. Operational Filtering / Threshold Logic (Cost & Performance Optimization)
+    // Safe Threshold Parameters: Low water AND safe temperature AND operating pump
+    var IS_WATER_SAFE = (waterLevel <= 6.0); // Safe threshold example: Under 6 inches
+    var IS_TEMP_SAFE = (tempC <= 50);        // Safe threshold example: Under 50°C
+    var IS_PUMP_SAFE = (pumpStatus === "IDLE" || pumpStatus === "RUNNING");
+
+    if (IS_WATER_SAFE && IS_TEMP_SAFE && IS_PUMP_SAFE) {
+        // Log the clean tracking telemetry to a background data table for compliance auditing
+        var telemetryLog = new GlideRecord('x_704340_metro_v_0_telemetry_vault_logs'); 
         if (telemetryLog.isValid()) {
             telemetryLog.initialize();
             telemetryLog.vault_id = vaultId;
             telemetryLog.water_level = waterLevel.toString();
             telemetryLog.temperature = tempC.toString();
             telemetryLog.pump_status = pumpStatus;
-            telemetryLog.evaluation = "AI Evaluated Result: NORMAL - No Incident Required.";
+            telemetryLog.evaluation = "NORMAL - Operational boundaries maintained. AI evaluation bypassed.";
             telemetryLog.insert();
         }
 
-        // Return a clean tracking response back to Postman/Sensor without an Incident ID
+        // Return a clean operational response. No downstream incidents or AI processing needed!
         response.setStatus(200);
         response.setBody({
             "status": "Success",
-            "evaluation": "AI Evaluated Result: Normal operating environment tracked.",
+            "evaluation": "Normal operating environment tracked.",
             "vault_incident_created": "NONE"
         });
         return;
     }
 
-    // 4. Anomaly Detected Workflow: Create Vault Safety Incident for OpenAI to process
-    var gr = new GlideRecord('x_704340_metro_v_0_vault_safety_incident'); // *** Replace with your actual Extended Incident Table Name ***
+    // 4. Anomaly Detected Workflow: Create Vault Safety Incident for OpenAI to process asynchronously
+    var gr = new GlideRecord('x_704340_metro_v_0_vault_safety_incident'); 
     gr.initialize();
-    gr.short_description = "Telemetry Alert: Anomaly detected at " + vaultId;
-    gr.description = "VAULT_ID: " + vaultId + " // WATER_LEVEL: " + waterLevel + " INCHES // TEMP: " + tempC + "C // PUMP_STATE: " + pumpStatus;
-    gr.payload_hash = payloadHash;
+    gr.short_description = "CRITICAL: Telemetry Anomaly detected at " + vaultId;
+    
+    // Construct a highly clean string layout for your downstream Async OpenAI business rule to parse perfectly
+    gr.description = "VAULT_ID: " + vaultId + "\n" +
+                     "WATER_LEVEL: " + waterLevel + "\n" +
+                     "TEMPERATURE_CELSIUS: " + tempC + "\n" +
+                     "PUMP_STATE: " + pumpStatus + "\n" +
+                     "METRICS_BREACHED: " + (!IS_WATER_SAFE ? "[Water Level] " : "") + (!IS_TEMP_SAFE ? "[Temperature] " : "") + (!IS_PUMP_SAFE ? "[Pump Failure] " : "");
+                     
+    gr.u_payload_hash = payloadHash;
     
     var createdSysId = gr.insert();
 
-    // Respond back indicating an active emergency ticket was opened
+    // Respond back to the sensor confirming the emergency ticket has safely triggered the AI Engine pipeline
     var res = {
         "status": "Anomaly Detected",
-        "evaluation": "Metrics exceeded safety thresholds. Operational record dispatched to AI Diagnostic Engine.",
+        "evaluation": "Metrics exceeded safety limits. Operational record safely dispatched to the GenAI Diagnostic Engine.",
         "vault_incident_created": createdSysId
     };
+    
     response.setBody(res);
     response.setStatus(201);
 
@@ -89,14 +109,14 @@
         <sys_created_by>admin</sys_created_by>
         <sys_created_on>2026-05-31 02:48:01</sys_created_on>
         <sys_id>e88209730f81c790d1e3efc530d1b2d1</sys_id>
-        <sys_mod_count>2</sys_mod_count>
+        <sys_mod_count>7</sys_mod_count>
         <sys_name>Ingest Sensor data</sys_name>
         <sys_package display_value="Metro Vault AI Protector" source="x_704340_metro_v_0">dc5b78f30f41c790d1e3efc530d1b292</sys_package>
         <sys_policy/>
         <sys_scope display_value="Metro Vault AI Protector">dc5b78f30f41c790d1e3efc530d1b292</sys_scope>
         <sys_update_name>sys_ws_operation_e88209730f81c790d1e3efc530d1b2d1</sys_update_name>
         <sys_updated_by>admin</sys_updated_by>
-        <sys_updated_on>2026-05-31 11:43:16</sys_updated_on>
+        <sys_updated_on>2026-06-05 11:08:40</sys_updated_on>
         <web_service_definition display_value="Vault Telemetry Endpoint">a14141ff0f41c790d1e3efc530d1b2bc</web_service_definition>
         <web_service_version/>
     </sys_ws_operation>

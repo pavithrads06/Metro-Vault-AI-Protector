@@ -29,26 +29,27 @@
         <role_conditions/>
         <script><![CDATA[(function executeRule(current, previous /*null when async*/) {
     try {
-        // 1. Initialize your existing REST message and method
+        // 1. Initialize out-of-the-box REST message outbound wrapper
         var sm = new sn_ws.RESTMessageV2('Open AI Integration', 'AI Input');
-        
-        // Hardened prompt enforcing a predictable JSON structure
-        var systemPrompt = "You are an industrial automation parser. Review vault telemetry logs. Respond STRICTLY in valid raw JSON matching this schema: {\"safety_level\":\"CRITICAL\"|\"WARNING\"|\"NORMAL\",\"root_cause\":\"string\",\"remediation\":\"string\",\"pump_override\":true|false}. Do not wrap in markdown or backticks.";
-                                   
-        var userContent = current.description.toString();
 
+        // Enforce strict output layout. Force the engine to output exact structural JSON.
+        var systemPrompt = "You are an industrial automation safety parser. Review the vault telemetry variables.Respond ONLY with a valid minified JSON object matching this structural schema exactly:{\"safety_level\":\"CRITICAL\"|\"WARNING\"|\"NORMAL\",\"root_cause\":\"string\",\"remediation\":\"string\",\"pump_override\":true|false}.Do not include conversational fillers, markdown wrappers, or backticks.";
+
+        var userContent = current.description.toString();
+        
         var jsonPayload = {
-            "model": "gpt-4o-mini",
+            "model": "gpt-4o-mini", // Lower latency, higher cost-efficiency for industrial automation
             "messages": [
                 { "role": "system", "content": systemPrompt },
                 { "role": "user", "content": userContent }
             ],
-            "temperature": 0.0 // Locked at 0.0 for maximum structural determinism
+            "temperature": 0.0, // Locked out to ensure mathematical determinism of data outputs
+            "response_format": { "type": "json_object" } // Enforce structured output rendering
         };
 
         sm.setRequestBody(JSON.stringify(jsonPayload));
-        
-        // 2. Execute call and benchmark round-trip performance latency
+
+        // 2. Execute connection and benchmark transaction performance latency
         var startTime = new Date().getTime();
         var response = sm.execute();
         var endTime = new Date().getTime();
@@ -56,59 +57,81 @@
         var responseBody = response.getBody();
         var httpStatus = response.getStatusCode();
 
-        // 3. Process response on successful HTTP 200
-        if (httpStatus == 200) {
+        var analysis;
+        var isAiEvaluationSuccessful = false;
+
+        // 3. Process operational evaluation blocks
+        if (httpStatus == 200 && responseBody) {
             current.execution_latency = endTime - startTime;
             current.ai_json_output = responseBody;
-            
-            // Use standard global JSON engine safely
+
             var parsedJson = JSON.parse(responseBody);
-            
             if (parsedJson && parsedJson.choices && parsedJson.choices[0]) {
-                var aiText = parsedJson.choices[0].message.content;
+                var aiText = parsedJson.choices[0].message.content.trim();
                 
-                // Robust sanitation: Strip markdown code blocks if the LLM leaked them
+                // Clean edge leaks of structural markdown notations
                 aiText = aiText.replace(/```json/g, "").replace(/```/g, "").trim();
                 
-                // Safely parse the inner payload
-                var analysis = JSON.parse(aiText);
-                
-                // 4. Map variables safely using fallback defaults if fields are missing
-                var rootCause = analysis.root_cause || "Unknown structural anomaly detected.";
-                var remediation = analysis.remediation || "Dispatch field technician for manual check.";
-                var pumpOverride = analysis.pump_override !== undefined ? analysis.pump_override : false;
-                var safetyLevel = analysis.safety_level || "WARNING";
-
-                // Build clean work notes layout
-                current.analysis = "=== AI REAL-TIME ANALYSIS ENGINE ===\n" +
-                                     "Safety Assessment: " + safetyLevel + "\n" +
-                                     "Root Cause: " + rootCause + "\n" +
-                                     "Recommended Mitigation: " + remediation + "\n" +
-                                     "Automated Pump Override Active: " + pumpOverride;
-                
-                // 5. Execute priority escalation rules based on parsed values
-                if (safetyLevel === "CRITICAL") {
-                    current.impact = 1;
-                    current.urgency = 1; // Pushes to Priority 1
-                    if (current.short_description.indexOf("[⚠️ AI ESCALATION]") === -1) {
-                        current.short_description = "[⚠️ AI ESCALATION] " + current.short_description;
-                    }
-                } else if (safetyLevel === "WARNING") {
-                    current.urgency = 2; // Medium-high priority
-                }
-                
-                // Important: Prevent infinite BR recursion loop
-                current.setWorkflow(false); 
-                current.update();
-            } else {
-                gs.error("AI Vault Processor: Received empty or malformed payload structure from OpenAI.");
+                analysis = JSON.parse(aiText);
+                isAiEvaluationSuccessful = true;
             }
-        } else {
-            // Safe casting of responseBody to string for log tracking
-            gs.error("AI Vault Processor HTTP Error: " + httpStatus + " - " + String(responseBody));
         }
+
+        // 4. ENTERPRISE FALLBACK SYSTEM: Execute deterministic check if OpenAI is unreachable
+        if (!isAiEvaluationSuccessful) {
+            gs.warn("AI Vault Processor Outage: OpenAI returned status code " + httpStatus + ". Engaging automated hardcoded fail-safe framework.");
+            
+            // Re-parse metrics out of standard description string generated by Ingest endpoint
+            var descStr = current.description.toString();
+            var isPumpBroken = descStr.indexOf("PUMP_STATE: FAILED") !== -1;
+            var isWaterSpiking = descStr.indexOf("METRICS_BREACHED: [Water Level]") !== -1 || descStr.indexOf("[Water Level]") !== -1;
+            
+            analysis = {
+                "safety_level": (isPumpBroken || isWaterSpiking) ? "CRITICAL" : "WARNING",
+                "root_cause": "OpenAI Inaccessible. Automatic hardcoded threshold fallback rules determined critical asset exposure risk.",
+                "remediation": "FAIL-SAFE ESCALATION: Dispatch closest service unit immediately to inspect vault infrastructure metrics manually.",
+                "pump_override": isPumpBroken ? false : true
+            };
+        }
+
+        // 5. Extract evaluations safely and assign fields to record targets
+        var safetyLevel = analysis.safety_level || "WARNING";
+        var rootCause = analysis.root_cause || "Unknown field data anomaly detected.";
+        var remediation = analysis.remediation || "Tech team requested for site validation diagnostics.";
+        var pumpOverride = (analysis.pump_override === true || analysis.pump_override === "true");
+
+        current.analysis = "=== AI REAL-TIME ANALYSIS ENGINE ===\n" +
+            "Safety Assessment: " + safetyLevel + "\n" +
+            "Root Cause: " + rootCause + "\n" +
+            "Recommended Mitigation: " + remediation + "\n" +
+            "Automated Pump Override Status: " + (pumpOverride ? "ACTIVE (FORCED START)" : "INACTIVE/HARDWARE FAILURE");
+
+        // 6. Automatically escalate priorities based on computed analysis values
+        if (safetyLevel === "CRITICAL") {
+            current.impact = 1;
+            current.urgency = 1; // Evaluates out dynamically to Priority 1 Critical Escalation
+            
+            if (current.short_description.indexOf("[⚠️ AI EMERGENCY]") === -1) {
+                current.short_description = "[⚠️ AI EMERGENCY] " + current.short_description;
+            }
+        } else if (safetyLevel === "WARNING") {
+            current.urgency = 2; // Priority 2 Alert Trigger
+        }
+
+        // 7. Commit database transactions while avoiding recursive loops
+        current.setWorkflow(false);
+        current.update();
+
     } catch (ex) {
-        gs.error("AI Vault Processor Exception thrown: " + ex.message);
+        gs.error("AI Vault Processor Global Exception Intercepted: " + ex.message);
+        
+        // Critical System Panic Mode: Force P1 tracking if entire script bombs out to ensure tech is sent
+        current.impact = 1;
+        current.urgency = 1;
+        current.short_description = "[⚠️ CRITICAL SYSTEM PANIC] " + current.short_description;
+        current.analysis = "CRITICAL FAILURE: Safety processor script crashed entirely. Panic protocol engaged. Tech dispatch forced.";
+        current.setWorkflow(false);
+        current.update();
     }
 })(current, previous);]]></script>
         <sys_class_name>sys_script</sys_class_name>
@@ -117,7 +140,7 @@
         <sys_domain>global</sys_domain>
         <sys_domain_path>/</sys_domain_path>
         <sys_id>64f589b70f81c790d1e3efc530d1b217</sys_id>
-        <sys_mod_count>6</sys_mod_count>
+        <sys_mod_count>12</sys_mod_count>
         <sys_name>AI Vault Telemetry Processor</sys_name>
         <sys_overrides/>
         <sys_package display_value="Metro Vault AI Protector" source="x_704340_metro_v_0">dc5b78f30f41c790d1e3efc530d1b292</sys_package>
@@ -125,7 +148,7 @@
         <sys_scope display_value="Metro Vault AI Protector">dc5b78f30f41c790d1e3efc530d1b292</sys_scope>
         <sys_update_name>sys_script_64f589b70f81c790d1e3efc530d1b217</sys_update_name>
         <sys_updated_by>admin</sys_updated_by>
-        <sys_updated_on>2026-05-31 11:09:39</sys_updated_on>
+        <sys_updated_on>2026-06-05 11:43:09</sys_updated_on>
         <template/>
         <when>async_always</when>
     </sys_script>
